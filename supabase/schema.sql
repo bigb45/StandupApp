@@ -61,6 +61,31 @@ CREATE POLICY "Managers can update settings." ON settings FOR UPDATE USING (
   EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'manager')
 );
 
+-- Trigger: auto-create profile when a new auth user is created
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+DECLARE
+  user_full_name text;
+  user_role text;
+  user_avatar_color text;
+BEGIN
+  -- Extract metadata from the auth user, with defaults
+  user_full_name := COALESCE(NEW.raw_user_meta_data->>'full_name', NEW.email);
+  user_role := COALESCE(NEW.raw_user_meta_data->>'role', 'employee');
+  user_avatar_color := COALESCE(NEW.raw_user_meta_data->>'avatar_color', '#' || lpad(to_hex(trunc(random()*16777215)::int), 6, '0'));
+
+  INSERT INTO public.profiles (id, full_name, email, role, avatar_color)
+  VALUES (NEW.id, user_full_name, NEW.email, user_role, user_avatar_color);
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Attach trigger to auth.users
+CREATE OR REPLACE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
 -- Insert initial settings
 INSERT INTO settings (digest_enabled, digest_time) VALUES (true, '08:00');
 
